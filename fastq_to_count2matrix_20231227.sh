@@ -1,0 +1,411 @@
+#!/bin/bash
+
+#定义gz后缀+双末端后缀获取函数
+function obtain_houzhui_name {
+gz_houzhui=$(awk 'NR==1{print $1}' ./sample_information_file/gz_end_symbol.txt)
+double_end1=$(awk 'NR==1{print $1}' ./sample_information_file/double_end_sequence_symbol.txt)
+double_end2=$(awk 'NR==2{print $1}' ./sample_information_file/double_end_sequence_symbol.txt)
+}
+
+
+#定义创建各个步骤的文件夹函数
+function judge_file {
+if [ ! -d "$1" ]; then
+        mkdir $1
+else
+        rm -r $1
+        mkdir $1
+
+fi
+}
+
+#定义查看上游分析各个包是否存在的函数
+function judge_packages {
+which $1
+if [ $? -eq 0 ];then
+        echo "======> 【" $1 '】 软件存在'  ' True √'
+        echo ""
+else
+	bash /data/changchuanjun/wechat_remind.sh "RNASeq上游分析各个包不完全存在，无法全部跑完，故退出！！！"
+        echo "==============> 【" $1 '】 软件不存在'  ' Error Error Error  × × ×'
+        exit 1
+fi
+}
+
+#判断上一条命令是否正确
+function judge {
+if [ $? -eq 0 ]; then
+#    echo "succeed"
+    echo "True"
+    echo ""
+else
+    echo ""
+    echo "命令错误！！！ failed failed failed"
+#    echo "failed"
+    bash /data/changchuanjun/wechat_remind.sh "RNASeq上游分析，上一步命令错误，请检查脚本，程序已退出！！！"
+    exit 1
+fi
+}
+                      
+
+#进行上游分析所有包是否都存在
+function total_judge {
+judge_packages fastqc
+judge_packages multiqc
+judge_packages fastp
+judge_packages hisat2-build
+judge_packages hisat2
+judge_packages samtools
+judge_packages Rscript
+judge_packages perl
+#judge_packages python3
+#judge_packages R
+}
+
+#定义判断相关文件夹是否存在的函数
+function judge_original_file {
+if [ ! -d "$1" ]; then
+        echo $1 "文件夹不存在！！！ failed"
+	bash /data/changchuanjun/wechat_remind.sh "RNASeq上游分析，程序所必须使用的文件夹或脚本目录不存在，程序停止！！！"
+        exit 1
+else
+        echo $1 "文件夹存在，正在进行后续分析...... True"
+fi
+}
+
+#定义判断相关文件是否存在的函数
+function judge_document {
+if [ ! -f "$1" ]; then
+        echo $1 "文件不存在！！！failed"
+	bash /data/changchuanjun/wechat_remind.sh "RNASeq上游分析，程序所必须使用的文件或脚本不存在，程序停止！！！"	
+        exit 1
+else
+        echo $1 "文件存在，正在进行后续分析...... True"
+fi
+}
+
+#定义数据质控函数
+function data_fastqc {
+judge_file ./fastqc_result
+echo ""
+echo "开始测序文件的数据质控......"
+
+for i in $(awk '{print $1}' ./sample_information_file/whole_sample_name.txt)
+do
+        echo "正在进行"$i"文件的数据质控......"
+
+        fastqc -t 32 ./data/$i -o ./fastqc_result/
+        judge
+        echo $i"文件的数据质控已经完成！！！"
+        echo ""
+done
+
+awk '{$1=  "所有文件的数据质控已经完成！！！ 结果已存放在 "  location "/fastqc_result/" " 目录下 " ; print$0}' location=${PWD} ./sample_information_file/gz_end_symbol.txt
+echo ""
+}
+
+#定义数据质控汇总函数
+function fastqc_result_multiqc {
+judge_file ./multiqc_result
+echo ""
+echo "开始测序文件数据质控报告的汇总......"
+multiqc ./fastqc_result/ -o ./multiqc_result
+judge
+awk '{$1=  "所有测序文件数据质控报告的汇总已经完成！！！ 结果已存放在 "  location "/multiqc_result/" " 目录下 " ; print$0}' location=${PWD} ./sample_information_file/gz_end_symbol.txt
+echo ""
+}
+
+
+#定义数据清洗函数fastp
+function clean_data_fastp {
+judge_file ./clean_data
+obtain_houzhui_name
+echo ""
+echo "开始测序文件的数据清洗(去除接头和清洗低质量reads)......"
+
+for i in $(awk '{print $1}' ./sample_information_file/remove_double_end_sequence_symbol_and_gz_end_symbol.txt)
+do
+        echo "正在进行"$i$double_end1$gz_houzhui "&" $i$double_end2$gz_houzhui"文件的数据清洗(去除接头和清洗低质量reads)......"
+        fastp -w 32  \
+        -i ./data/${i}$double_end1$gz_houzhui \
+        -I ./data/${i}$double_end1$gz_houzhui \
+        -o ./clean_data/${i}_1_clean.fq.gz \
+        -O ./clean_data/${i}_2_clean.fq.gz \
+        -h ./clean_data/${i}.fastp.html \
+        -j ./clean_data/${i}.fastp.json
+        judge
+        echo $i$double_end1$gz_houzhui "&" $i$double_end2$gz_houzhui"文件的数据清洗(去除接头和清洗低质量reads)已经完成！！！"
+#       echo ""
+done
+awk '{$1=  "所有文件的数据清洗(去除接头和清洗低质量reads)已经完成！！！ 结果已存放在 "  location "/clean_data/" " 目录下 " ; print$0}' location=${PWD} ./sample_information_file/gz_end_symbol.txt
+echo ""
+
+cp /data/changchuanjun/fastp_count.py ./clean_data/
+
+python ./clean_data/fastp_count.py ./clean_data
+
+rm ./clean_data/*.html
+rm ./clean_data/*.json
+
+}
+
+
+#构建参考基因组 ./ref/*.fasta是输入文件，./ref/genome是构建好的基因组的路径（即输出文件）
+#定义比对到参考基因组函数bidui-refgenome
+function construct_refgenome {
+echo ""
+echo "1、开始构建参考基因组......"
+
+hisat2-build ./ref/ref_genome/* ./ref/genome 1>./ref/hisat2-build.log 2>&1
+judge
+awk '{$1=  "构建参考基因组已经完成！！！ 结果已存放在 "  location "/ref" " 目录下 " ; print$0}' location=${PWD} ./sample_information_file/gz_end_symbol.txt
+echo ""
+}
+
+#定义判断参考基因组是否存在且数量符合要求的函数
+function judge_refgenomefile_and_number {
+refgenome_number=$(ls ./ref/ref_genome/* | wc -l)
+if [ $refgenome_number -eq 1 ]; then
+        echo "参考基因组存在且唯一，正在进行后续分析...... True"
+else
+        echo "参考基因组不符合要求，请重新检查！！！ failed"
+        exit 1
+fi
+}
+
+#定义判断参考基因组是否需要构建索引的函数
+function refgenome_operation {
+number_index=$(ls ./ref/*.ht2 | wc -l)
+if [ $number_index -eq 8 ]; then
+        echo "参考基因组的索引文件完整，正在进行后续分析...... True"
+else
+        echo "参考基因组的索引文件缺失！！！"
+        echo "正在重新构建参考基因组索引......"
+        judge_original_file ./ref/ref_genome
+        judge_refgenomefile_and_number
+        construct_refgenome
+fi
+}
+
+#定义Hisat2比对函数
+function hisat2_samtools {
+judge_file ./1.Mapping
+obtain_houzhui_name
+mkdir ./1.Mapping/log
+mkdir ./1.Mapping/sam
+mkdir ./1.Mapping/bam
+
+echo ""
+echo "2、开始Hisat2-samtools！！！"
+
+for i in $(awk '{print $1}' ./sample_information_file/remove_double_end_sequence_symbol_and_gz_end_symbol.txt)
+do
+        echo "正在进行"$i$double_end1$gz_houzhui "&" $i$double_end2$gz_houzhui "文件的Hisat2-samtools......"
+
+        hisat2 --new-summary \
+        -p 32 \
+        -x ./ref/genome \
+        -1 ./clean_data/${i}_1_clean.fq.gz \
+        -2 ./clean_data/${i}_2_clean.fq.gz \
+        -S ./1.Mapping/sam/$i.sam \
+        1>./1.Mapping/log/$i.log 2>&1
+        judge
+        echo $i$double_end1$gz_houzhui "&" $i$double_end2$gz_houzhui "文件的Hisat2比对已经完成！！！生成"$i".sam文件"
+	
+	echo "正在进行"$i".sam文件的压缩和排序......"
+	samtools sort -m 4G -@ 32 -o ./1.Mapping/bam/$i.bam ./1.Mapping/sam/$i.sam
+	judge
+	echo $i".sam文件的压缩和排序已经完成！！！生成"$i".bam文件"
+	rm ./1.Mapping/sam/$i.sam
+	
+	echo "正在进行"$i".bam文件的bam index......"
+	samtools index -@ 32 ./1.Mapping/bam/$i.bam
+	judge
+	echo $i".bam文件的压缩和排序已经完成！！！生成"$i".bai文件"
+	echo ""
+	
+	
+#       echo ""
+done
+
+awk '{$1= "所有文件的Hisat2-samtools已经完成！！！ 比对结果已存放在"location"/1.Mapping/sam、bam/" "目录下，相关日志文件已经存放在"location"/1.Mapping/log/" "目录下" ; print $0}' location=${PWD} ./sample_information_file/gz_end_symbol.txt
+echo ""
+}
+
+
+function hisat2_mapping_count {
+#hisat2_mapping_rate*.txt
+cp /data/changchuanjun/count_Hisat2_mapping_rate.py ./
+python count_Hisat2_mapping_rate.py --the_input_location_of_mapping_log 1.Mapping/log/ --outFileName ./
+rm ./count_Hisat2_mapping_rate.py
+
+
+}
+
+
+#定义判断参考基因组注释文件是否存在且数量符合要求的函数
+function judge_refgenome_gtf_file_and_number {
+gtf_file_and_number=$(ls ./ref/gtf_zhushi/*.gtf | wc -l)
+if [ $gtf_file_and_number -eq 1 ]; then
+        echo "参考基因组注释文件存在且唯一，正在进行后续分析...... True"
+else
+        echo "参考基因组注释文件不符合要求，请重新检查！！！"
+        echo "提示：可能是参考基因组注释文件后缀不为gtf(gff需要转换为gtf)、参考基因组注释文件数量不唯一或不存在等......，请重新检查！！！"
+        echo "failed"
+        exit 1
+fi
+}
+
+#定义表达定量函数
+function quantitative_expression {
+judge_file ./2.Quantification
+
+mkdir ./2.Quantification/quantitative-result
+mkdir ./2.Quantification/quantitative-result/count
+mkdir ./2.Quantification/quantitative-result/log
+
+judge_original_file /data/changchuanjun/necessary_packages/RunFeatureCounts
+
+if [ -d "./RunFeatureCounts" ]; then
+	rm -rf ./RunFeatureCounts
+else
+	cp -r /data/changchuanjun/necessary_packages/RunFeatureCounts ./
+fi
+
+#cp -r /data/changchuanjun/necessary_packages/RunFeatureCounts ./
+
+
+echo ""
+echo "5、开始对压缩和排序生成的bam文件进行表达定量！！！"
+
+for i in $(awk '{print $1}' ./sample_information_file/remove_double_end_sequence_symbol_and_gz_end_symbol.txt)
+do
+        echo "正在进行"$i".bam文件的表达定量......"
+
+        Rscript ./RunFeatureCounts/run-featurecounts.R \
+        -b ./1.Mapping/bam/$i.bam \
+        -g ./ref/gtf_zhushi/* \
+	-f exon \
+	-a gene_id \
+        -o ./2.Quantification/quantitative-result/count/$i \
+        1>./2.Quantification/quantitative-result/log/$i.log 2>&1
+        judge
+        echo $i".bam文件的表达定量已经完成！！！生成"$i".count文件和"$i".log文件"
+#       echo ""
+done
+#rm -r /data/changchuanjun/necessary_packages/RunFeatureCounts ./
+awk '{$1= "所有文件的表达定量已经完成！！！ 结果已存放在 " location "/2.Quantification/quantitative-result/count/" " 目录下，相关日志文件(subread)已经存放在" location "/2.Quantification/quantitative-result/log/" "目录下 " ; print $1 }' location=${PWD} ./sample_information_file/gz_end_symbol.txt
+echo ""
+}
+
+#定义合并矩阵函数
+function merge_result {
+judge_file ./3.Merge_result
+
+echo ""
+echo "6、开始对表达定量生成的count文件进行合并......"
+
+ls ./2.Quantification/quantitative-result/count/*.count > ./3.Merge_result/genes.quant_files.txt
+
+perl ./RunFeatureCounts/abundance_estimates_to_matrix.pl \
+    --est_method featureCounts \
+    --quant_files ./3.Merge_result/genes.quant_files.txt \
+    --out_prefix ./3.Merge_result/genes
+judge
+mv __tmp_runTMM.R ./3.Merge_result
+awk '{$1= "所有表达定量生成的count文件合并已经完成！！！ 结果已存放在 " location "/3.Merge_result" " 目录下" ; print $1 }' location=${PWD} ./sample_information_file/gz_end_symbol.txt
+echo ""
+}
+
+function start_run {
+if [ ! -e "process_double-end-data.py" ]; then
+        cp /data/changchuanjun/rnaseq_upstream_analysis_jiaoben/process_double-end-data.py ./
+else
+        echo "当前目录下已经存在python脚本-->process_double-end-data.py......"
+
+fi
+echo "start......"
+}
+
+#------------------------------------------------------------------
+total_judge
+start_run
+python process_double-end-data.py
+data_fastqc
+fastqc_result_multiqc
+clean_data_fastp
+
+#判断参考基因组文件夹是否存在
+judge_original_file ./ref
+refgenome_operation
+hisat2_samtools
+
+hisat2_mapping_count
+
+#判断参考基因组注释文件夹是否存在
+judge_original_file ./ref/gtf_zhushi
+#判断参考基因组注释文件是否存在且数量符合要求
+judge_refgenome_gtf_file_and_number
+quantitative_expression
+merge_result
+
+
+echo $(date +%Y/%m/%d/%T) | while read id; do /data/Erick_Tong/software/email 1045959449@qq.com xiezushu转录组数据上游分析完成$id;done
+
+echo $(date +%Y/%m/%d/%T) | while read id; do /data/Erick_Tong/software/email 1712710596@qq.com xiezushu转录组数据上游分析完成$id;done
+
+bash /data/changchuanjun/wechat_remind.sh "Congratulation!!!  ma-experiment-RNASeq上游分析已成功完成！！！"
+
+#**********************************************************************
+#分步shell脚本
+
+function jiaoben_make {
+
+mkdir jiaoben
+awk '{print "fastqc -t 32 " $2 " -o " location "/fastqc_result/" }' location=${PWD} ./sample_information_file/whole_sample_name.txt > ./jiaoben/fastqc.sh
+awk '{print "fastqc -t 32 " $2 " -o " location "/fastqc_result/" " 1>" location "/fastqc_result/" $1 "fastqc.sh.log 2>&1"}' location=${PWD} ./sample_information_file/whole_sample_name.txt > ./jiaoben/log_fastqc.sh
+
+
+
+awk '{print "multiqc " location "/fastqc_result/" " -o " location "/multiqc_result" }' location=${PWD} ./sample_information_file/gz_end_symbol.txt > jiaoben/multiqc.sh
+awk '{print "multiqc " location "/fastqc_result/" " -o " location "/multiqc_result" " 1>" location "/multiqc_result/multiqc_result.log 2>&1" }' location=${PWD} ./sample_information_file/gz_end_symbol.txt > jiaoben/log_multiqc.sh
+
+
+awk '{print "fastp -w 32 \\\n" "-i " $2 "_1.fq.gz \\\n" "-I " $2 "_2.fq.gz \\\n"  "-o " location "/clean_data/" $1 "_1_clean.fq.gz \\\n" "-O " location "/clean_data/" $1 "_2_clean.fq.gz \\\n" "-h " location "/clean_data/" $1 ".fastp.html \\\n" "-j " location "/clean_data/" $1 ".fastp.json \\\n" }' location=${PWD} ./sample_information_file/remove_double_end_sequence_symbol_and_gz_end_symbol.txt > ./jiaoben/fastp.sh
+awk '{print "fastp -w 32 \\\n" "-i " $2 "_1.fq.gz \\\n" "-I " $2 "_2.fq.gz \\\n"  "-o " location "/clean_data/" $1 "_1_clean.fq.gz \\\n" "-O " location "/clean_data/" $1 "_2_clean.fq.gz \\\n" "-h " location "/clean_data/" $1 ".fastp.html \\\n" "-j " location "/clean_data/" $1 ".fastp.json \\\n" "1> " location "/clean_data/" $1 ".fastp.log \\\n" "2>&1"}' location=${PWD} ./sample_information_file/remove_double_end_sequence_symbol_and_gz_end_symbol.txt > ./jiaoben/log_fastp.sh
+
+
+
+awk '{print "hisat2-build " location "/ref/ref_genome/* " location "/ref/genome"}' location=${PWD} ./sample_information_file/gz_end_symbol.txt > jiaoben/hisat2-build.sh
+awk '{print "hisat2-build " location "/ref/ref_genome/* " location "/ref/genome " "1> "location "/ref/hisat2-build.log 2>&1"}' location=${PWD} ./sample_information_file/gz_end_symbol.txt > jiaoben/log_hisat2-build.sh
+
+
+awk '{print "hisat2 --new-summary \\\n" "-p 32 \\\n" "-x " location "/ref/genome \\\n"  "-1 " location "/clean_data/" $1 "_1_clean.fq.gz \\\n" "-2 " location "/clean_data/" $1 "_2_clean.fq.gz \\\n" "-S " location "/1.Mapping/sam/" $1 ".sam \\\n" }' location=${PWD} ./sample_information_file/remove_double_end_sequence_symbol_and_gz_end_symbol.txt > ./jiaoben/hisat2_mapping.sh
+awk '{print "hisat2 --new-summary \\\n" "-p 32 \\\n" "-x " location "/ref/genome \\\n"  "-1 " location "/clean_data/" $1 "_1_clean.fq.gz \\\n" "-2 " location "/clean_data/" $1 "_2_clean.fq.gz \\\n" "-S " location "/1.Mapping/sam/" $1 ".sam \\\n" "1> " location "/1.Mapping/sam/" $1 ".sam.log \\\n" "2>&1" }' location=${PWD} ./sample_information_file/remove_double_end_sequence_symbol_and_gz_end_symbol.txt > ./jiaoben/hisat2_mapping.sh
+
+
+awk '{print "samtools sort -m 16G -@ 32 -o " location "/1.Mapping/bam/" $1 ".bam " location "/1.Mapping/sam/" $1 ".sam" }' location=${PWD} ./sample_information_file/remove_double_end_sequence_symbol_and_gz_end_symbol.txt > ./jiaoben/samtools_sort.sh
+awk '{print "samtools sort -m 16G -@ 32 -o " location "/1.Mapping/bam/" $1 ".bam " location "/1.Mapping/sam/" $1 ".sam " "1> "location "/1.Mapping/bam/" $1 ".bam.log 2>&1"}' location=${PWD} ./sample_information_file/remove_double_end_sequence_symbol_and_gz_end_symbol.txt > ./jiaoben/log_samtools_sort.sh
+
+
+awk '{print "samtools index -@ 32 " location "/1.Mapping/bam/" $1 ".bam" }' location=${PWD} ./sample_information_file/remove_double_end_sequence_symbol_and_gz_end_symbol.txt > ./jiaoben/samtools_index.sh
+awk '{print "samtools index -@ 32 " location "/1.Mapping/bam/" $1 ".bam " "1> "location "/1.Mapping/bam/" $1 ".bai.log 2>&1"}' location=${PWD} ./sample_information_file/remove_double_end_sequence_symbol_and_gz_end_symbol.txt > ./jiaoben/log_samtools_index.sh
+
+
+awk '{print "Rscript " location "/RunFeatureCounts/run-featurecounts.R \\\n" "-b " location  "/1.Mapping/bam/"  $1 ".bam \\\n" "-g " location "/ref/gtf_zhushi/* \\\n" "-f exon -a gene_id \\\n" "-o " location "/2.Quantification/quantitative-result/" $1 }' location=${PWD} ./sample_information_file/remove_double_end_sequence_symbol_and_gz_end_symbol.txt > ./jiaoben/quantification.sh
+awk '{print "Rscript " location "/RunFeatureCounts/run-featurecounts.R \\\n" "-b " location  "/1.Mapping/bam/"  $1 ".bam \\\n" "-g " location "/ref/gtf_zhushi/* \\\n" "-f exon -a gene_id \\\n" "-o " location "/2.Quantification/quantitative-result/" $1 "\\\n" "1> " location "/2.Quantification/quantitative-result/" $1 ".quantification.log \\\n" "2>&1"}' location=${PWD} ./sample_information_file/remove_double_end_sequence_symbol_and_gz_end_symbol.txt > ./jiaoben/log_quantification.sh
+
+
+awk '{print "ls ./2.Quantification/quantitative-result/count/*.count > ./3.Merge_result/genes.quant_files.txt"}' ./sample_information_file/gz_end_symbol.txt > jiaoben/merge_count.sh
+awk '{print "ls ./2.Quantification/quantitative-result/count/*.count > ./3.Merge_result/genes.quant_files.txt " "1> " location "/3.Merge_result/" "merge_count.log " "2>&1"}' ./sample_information_file/gz_end_symbol.txt > jiaoben/log_merge_count.sh
+
+awk '{print "perl ./RunFeatureCounts/abundance_estimates_to_matrix.pl \\\n" " --est_method featureCounts \\\n" " --quant_files ./3.Merge_result/genes.quant_files.txt \\\n" " --out_prefix ./3.Merge_result/genes \\\n" }' ./sample_information_file/gz_end_symbol.txt > jiaoben/abundance_estimates.sh
+awk '{print "perl ./RunFeatureCounts/abundance_estimates_to_matrix.pl \\\n" " --est_method featureCounts \\\n" " --quant_files ./3.Merge_result/genes.quant_files.txt \\\n" " --out_prefix ./3.Merge_result/genes \\\n" " 1> " location "/3.Merge_result/" "abundance_estimates.log " "2>&1"}' ./sample_information_file/gz_end_symbol.txt > jiaoben/log_abundance_estimates.sh
+}
+
+jiaoben_make
+exit()
+
+
+
+
