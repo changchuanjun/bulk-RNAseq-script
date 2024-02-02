@@ -128,7 +128,7 @@ do
         echo "正在进行"$i$double_end1$gz_houzhui "&" $i$double_end2$gz_houzhui"文件的数据清洗(去除接头和清洗低质量reads)......"
         fastp -w 32  \
         -i ./data/${i}$double_end1$gz_houzhui \
-        -I ./data/${i}$double_end1$gz_houzhui \
+        -I ./data/${i}$double_end2$gz_houzhui \
         -o ./clean_data/${i}_1_clean.fq.gz \
         -O ./clean_data/${i}_2_clean.fq.gz \
         -h ./clean_data/${i}.fastp.html \
